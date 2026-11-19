@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Défense de la Tour</title>
+<meta name="description" content="Défends ta tour contre les vagues de monstres. Jeu gratuit, jouable sur mobile et ordinateur.">
+<style>
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;background:#1b2a1f;color:#fff;font-family:system-ui,Segoe UI,Roboto,sans-serif;touch-action:manipulation}
+  #wrap{max-width:420px;margin:0 auto;padding:8px;display:flex;flex-direction:column;gap:8px}
+  .ad{min-height:60px;background:#243a2a;border:1px dashed #4b6b55;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#7fa089;font-size:12px;overflow:hidden}
+  .ad ins{display:block;width:100%}
+  #hud{display:flex;justify-content:space-between;font-weight:700;font-size:15px;padding:0 4px}
+  #stage{position:relative}
+  canvas{width:100%;height:auto;display:block;border-radius:12px;background:#3d7a3a;touch-action:none}
+  #overlay{position:absolute;inset:0;background:rgba(10,20,12,.88);border-radius:12px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;text-align:center;padding:16px}
+  #overlay h1{margin:0;font-size:28px}
+  #overlay p{margin:0;color:#cfe3d4}
+  button{font:inherit;font-weight:700;border:0;border-radius:10px;padding:12px 18px;cursor:pointer;background:#f5b82e;color:#2b1d00}
+  button:disabled{opacity:.45}
+  #shop{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+  #shop button{padding:8px 4px;font-size:12px;line-height:1.25;background:#2f5a38;color:#fff}
+  #shop button small{display:block;color:#f5d36b;font-weight:600}
+  footer{font-size:11px;color:#8aa593;text-align:center;padding:4px 0 12px}
+  footer a{color:#a8d4b4}
+</style>
+</head>
+<body>
+<div id="wrap">
+
+  <!-- ===== PUBLICITÉ HAUT (hors de la zone de jeu) ===== -->
+  <div class="ad" id="adTop"></div>
+
+  <div id="hud">
+    <span>🌊 Vague <b id="wave">1</b></span>
+    <span>🪙 <b id="coins">0</b></span>
+    <span>❤️ <b id="hp">10</b></span>
+    <span>🏆 <b id="best">0</b></span>
+  </div>
+
+  <div id="stage">
+    <canvas id="c" width="360" height="480"></canvas>
+    <div id="overlay">
+      <h1 id="ovTitle">🏰 Défense de la Tour</h1>
+      <p id="ovText">Touche les monstres pour les éliminer.<br>Achète des améliorations avec tes pièces.</p>
+      <button id="startBtn">Jouer</button>
+    </div>
+  </div>
+
+  <div id="shop">
+    <button id="up1">⚔️ Dégâts<small></small></button>
+    <button id="up2">🏹 Tourelle auto<small></small></button>
+    <button id="up3">🧱 Réparer tour<small></small></button>
+  </div>
+
+  <!-- ===== PUBLICITÉ BAS ===== -->
+  <div class="ad" id="adBottom"></div>
+
+  <footer>
+    <a href="privacy.html">Politique de confidentialité</a> ·
+    <a href="mailto:contact@exemple.com">Contact</a>
+  </footer>
+</div>
+
+<script>
+/* =====================================================
+   CONFIGURATION ADSENSE — À REMPLIR
+   1. Remplace ADSENSE_CLIENT par ton ID éditeur (ca-pub-XXXXXXXXXXXXXXXX)
+   2. Crée 2 blocs d'annonces "display responsive" dans AdSense
+      et colle leurs identifiants de bloc ci-dessous.
+   ===================================================== */
+const ADSENSE_CLIENT = "ca-pub-XXXXXXXXXXXXXXXX";
+const SLOT_TOP       = "1111111111";
+const SLOT_BOTTOM    = "2222222222";
+
+const adsConfigured = !/X{6,}/.test(ADSENSE_CLIENT);
+
+function initAds(){
+  const slots = [["adTop",SLOT_TOP],["adBottom",SLOT_BOTTOM]];
+  if(!adsConfigured){
+    slots.forEach(([id])=>document.getElementById(id).textContent="Emplacement publicitaire (AdSense non configuré)");
+    return;
+  }
+  const s=document.createElement("script");
+  s.async=true;
+  s.crossOrigin="anonymous";
+  s.src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client="+ADSENSE_CLIENT;
+  document.head.appendChild(s);
+  slots.forEach(([id,slot])=>{
+    const ins=document.createElement("ins");
+    ins.className="adsbygoogle";
+    ins.style.display="block";
+    ins.setAttribute("data-ad-client",ADSENSE_CLIENT);
+    ins.setAttribute("data-ad-slot",slot);
+    ins.setAttribute("data-ad-format","auto");
+    ins.setAttribute("data-full-width-responsive","true");
+    document.getElementById(id).appendChild(ins);
+    try{(window.adsbygoogle=window.adsbygoogle||[]).push({});}catch(e){}
+  });
+}
+
+/* Optionnel : annonces plein écran entre deux parties (Ad Placement API,
+   réservé aux jeux approuvés « AdSense for Games »). Sans approbation, ne rien activer.
+   function showBreak(){ if(window.adBreak) adBreak({type:'next', name:'game-over'}); } */
+function showBreak(){}
+
+initAds();
+
+/* ===================== JEU ===================== */
+const cv=document.getElementById("c"), ctx=cv.getContext("2d");
+const W=cv.width,H=cv.height;
+const $=id=>document.getElementById(id);
+const tower={x:W/2,y:H-50,r:28};
+let state,best=+(localStorage.getItem("defbest")||0);
+$("best").textContent=best;
+
+function reset(){
+  state={run:false,wave:1,coins:0,hp:10,maxhp:10,dmg:1,autoLvl:0,
+         enemies:[],shots:[],pops:[],spawnLeft:6,spawnT:0,autoT:0,
+         waveBreak:0,score:0,last:performance.now()};
+  updHUD();
+}
+function costs(){
+  return [10+state.dmg*8, 15+state.autoLvl*12, 8];
+}
+function updHUD(){
+  $("wave").textContent=state.wave;
+  $("coins").textContent=state.coins;
+  $("hp").textContent=state.hp;
+  $("best").textContent=best;
+  const c=costs();
+  const b=[$("up1"),$("up2"),$("up3")];
+  b[0].querySelector("small").textContent="Niv."+state.dmg+" · "+c[0]+"🪙";
+  b[1].querySelector("small").textContent="Niv."+state.autoLvl+" · "+c[1]+"🪙";
+  b[2].querySelector("small").textContent="+3 PV · "+c[2]+"🪙";
+  b[0].disabled=state.coins<c[0];
+  b[1].disabled=state.coins<c[1];
+  b[2].disabled=state.coins<c[2]||state.hp>=state.maxhp;
+}
+$("up1").onclick=()=>buy(0);$("up2").onclick=()=>buy(1);$("up3").onclick=()=>buy(2);
+function buy(i){
+  if(!state.run)return;
+  const c=costs()[i];
+  if(state.coins<c)return;
+  if(i===2&&state.hp>=state.maxhp)return;
+  state.coins-=c;
+  if(i===0)state.dmg++;
+  if(i===1)state.autoLvl++;
+  if(i===2)state.hp=Math.min(state.maxhp,state.hp+3);
+  updHUD();
+}
+
+function spawn(){
+  const w=state.wave;
+  const big=Math.random()<Math.min(.08+w*.03,.35);
+  const hp=big?4+w:1+Math.floor(w/2);
+  state.enemies.push({
+    x:20+Math.random()*(W-40),y:-20,
+    r:big?20:14,hp,maxhp:hp,
+    v:(big?22:32)+Math.random()*12+w*3,
+    big,val:big?5:2
+  });
+}
+
+function hitAt(px,py){
+  if(!state.run)return;
+  let target=null,bd=1e9;
+  for(const e of state.enemies){
+    const d=Math.hypot(e.x-px,e.y-py);
+    if(d<e.r+16&&d<bd){bd=d;target=e}
+  }
+  state.shots.push({x1:tower.x,y1:tower.y,x2:px,y2:py,t:.12});
+  if(target)damage(target,state.dmg);
+}
+function damage(e,d){
+  e.hp-=d;
+  state.pops.push({x:e.x,y:e.y-e.r,txt:"-"+d,t:.5});
+  if(e.hp<=0){
+    state.enemies.splice(state.enemies.indexOf(e),1);
+    state.coins+=e.val;state.score+=e.val;
+    updHUD();
+  }
+}
+function pos(ev){
+  const r=cv.getBoundingClientRect();
+  const t=ev.touches?ev.touches[0]:ev;
+  return [(t.clientX-r.left)*W/r.width,(t.clientY-r.top)*H/r.height];
+}
+cv.addEventListener("pointerdown",ev=>{ev.preventDefault();hitAt(...pos(ev))});
+
+function update(dt){
+  if(!state.run)return;
+  // spawn
+  if(state.spawnLeft>0){
+    state.spawnT-=dt;
+    if(state.spawnT<=0){spawn();state.spawnLeft--;state.spawnT=Math.max(.35,1.1-state.wave*.06)}
+  }else if(state.enemies.length===0){
+    state.waveBreak+=dt;
+    if(state.waveBreak>1.5){
+      state.wave++;state.spawnLeft=5+state.wave*2;state.waveBreak=0;state.coins+=5;
+      updHUD();
+    }
+  }
+  // auto turret
+  if(state.autoLvl>0&&state.enemies.length){
+    state.autoT-=dt;
+    if(state.autoT<=0){
+      state.autoT=Math.max(.2,1.2-state.autoLvl*.12);
+      let t=state.enemies.reduce((a,b)=>b.y>a.y?b:a);
+      state.shots.push({x1:tower.x,y1:tower.y,x2:t.x,y2:t.y,t:.12,auto:true});
+      damage(t,1+Math.floor(state.autoLvl/3));
+    }
+  }
+  // enemies
+  for(const e of [...state.enemies]){
+    e.y+=e.v*dt;
+    if(e.y>=tower.y-tower.r){
+      state.enemies.splice(state.enemies.indexOf(e),1);
+      state.hp-=e.big?2:1;
+      state.pops.push({x:tower.x,y:tower.y-40,txt:"💥",t:.5});
+      updHUD();
+      if(state.hp<=0){gameOver();return}
+    }
+  }
+  state.shots=state.shots.filter(s=>(s.t-=dt)>0);
+  state.pops=state.pops.filter(p=>(p.t-=dt)>0);
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  // sol
+  ctx.fillStyle="#3d7a3a";ctx.fillRect(0,0,W,H);
+  ctx.fillStyle="#46873f";
+  for(let i=0;i<14;i++){ctx.fillRect((i*83)%W,(i*131)%H,30,6)}
+  // tour
+  ctx.fillStyle="#8a8f98";ctx.fillRect(tower.x-30,tower.y-24,60,52);
+  ctx.fillStyle="#6c717a";
+  for(let i=0;i<4;i++)ctx.fillRect(tower.x-30+i*16,tower.y-34,12,12);
+  ctx.fillStyle="#4a3b2a";ctx.fillRect(tower.x-9,tower.y+4,18,24);
+  // barre de vie tour
+  ctx.fillStyle="#0006";ctx.fillRect(tower.x-30,tower.y+34,60,6);
+  ctx.fillStyle="#e24b4b";ctx.fillRect(tower.x-30,tower.y+34,60*state.hp/state.maxhp,6);
+  // tirs
+  for(const s of state.shots){
+    ctx.strokeStyle=s.auto?"#7fd1ff":"#ffe27a";ctx.lineWidth=3;
+    ctx.beginPath();ctx.moveTo(s.x1,s.y1-20);ctx.lineTo(s.x2,s.y2);ctx.stroke();
+  }
+  // ennemis
+  for(const e of state.enemies){
+    ctx.fillStyle=e.big?"#7b3fa0":"#58b84a";
+    ctx.beginPath();ctx.arc(e.x,e.y,e.r,0,7);ctx.fill();
+    ctx.fillStyle="#fff";
+    ctx.beginPath();ctx.arc(e.x-e.r*.35,e.y-e.r*.2,e.r*.22,0,7);ctx.arc(e.x+e.r*.35,e.y-e.r*.2,e.r*.22,0,7);ctx.fill();
+    ctx.fillStyle="#111";
+    ctx.beginPath();ctx.arc(e.x-e.r*.35,e.y-e.r*.15,e.r*.1,0,7);ctx.arc(e.x+e.r*.35,e.y-e.r*.15,e.r*.1,0,7);ctx.fill();
+    if(e.maxhp>1){
+      ctx.fillStyle="#0007";ctx.fillRect(e.x-e.r,e.y-e.r-8,e.r*2,4);
+      ctx.fillStyle="#ffd24a";ctx.fillRect(e.x-e.r,e.y-e.r-8,e.r*2*e.hp/e.maxhp,4);
+    }
+  }
+  // textes
+  ctx.font="bold 14px system-ui";ctx.textAlign="center";
+  for(const p of state.pops){ctx.globalAlpha=Math.min(1,p.t*3);ctx.fillStyle="#fff";ctx.fillText(p.txt,p.x,p.y-(.5-p.t)*30)}
+  ctx.globalAlpha=1;
+}
+
+function loop(now){
+  const dt=Math.min(.05,(now-state.last)/1000);state.last=now;
+  update(dt);draw();
+  requestAnimationFrame(loop);
+}
+
+function gameOver(){
+  state.run=false;
+  const isRecord=state.score>best;
+  if(isRecord){best=state.score;localStorage.setItem("defbest",best)}
+  updHUD();
+  $("ovTitle").textContent="💀 Tour détruite !";
+  $("ovText").innerHTML="Vague atteinte : <b>"+state.wave+"</b><br>Score : <b>"+state.score+"</b>"+(isRecord?"<br>🎉 Nouveau record !":"");
+  $("startBtn").textContent="Rejouer";
+  $("overlay").style.display="flex";
+  showBreak();
+}
+$("startBtn").onclick=()=>{
+  reset();state.run=true;state.last=performance.now();
+  $("overlay").style.display="none";
+};
+
+reset();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
